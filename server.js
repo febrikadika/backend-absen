@@ -9,10 +9,8 @@ const PORT = process.env.PORT || 8080;
 app.use(cors());
 app.use(express.json());
 
-// Path untuk menyimpan file JSON riwayat absensi
 const fileDataAbsen = path.join(__dirname, "absensi.json");
 
-// Fungsi pembantu untuk membaca data absensi yang sudah ada
 const bacaDataAbsen = () => {
   try {
     if (!fs.existsSync(fileDataAbsen)) {
@@ -26,7 +24,6 @@ const bacaDataAbsen = () => {
   }
 };
 
-// Database Karyawan
 const databaseKaryawan = [
   { id: "B1D212045", nama: "Ardika" },
   { id: "B1D321123", nama: "Padlahudin" },
@@ -36,7 +33,6 @@ const databaseKaryawan = [
   { id: "B1D876678", nama: "Fitriani" },
 ];
 
-// Endpoint untuk melakukan Absensi (POST)
 app.post("/api/absen", (req, res) => {
   const { namaInput } = req.body;
 
@@ -58,49 +54,79 @@ app.post("/api/absen", (req, res) => {
     });
   }
 
-  // Mengambil Waktu Real-Time (Tanggal, Jam, Hari)
+  // Mengambil waktu lokal dengan zona waktu Asia/Jakarta (WIB) agar akurat di server cloud
   const sekarang = new Date();
 
-  // Konvensi hari dalam bahasa Indonesia
-  const daftarHari = [
-    "Minggu",
-    "Senin",
-    "Selasa",
-    "Rabu",
-    "Kamis",
-    "Jumat",
-    "Sabtu",
-  ];
-  const hari = daftarHari[sekarang.getDay()];
+  const opsiJam = {
+    timeZone: "Asia/Jakarta",
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric",
+    hour12: false,
+  };
+  const formatterWaktu = new Intl.DateTimeFormat("en-GB", opsiJam);
+  const partsWaktu = formatterWaktu.formatToParts(sekarang);
 
-  // Format Tanggal: YYYY-MM-DD
-  const tanggal = sekarang.toISOString().split("T")[0];
+  let jamWIB = 0;
+  let menitWIB = 0;
+  partsWaktu.forEach((part) => {
+    if (part.type === "hour")
+      jamWIB = parseInt(part.type === "hour" ? part.value : 0); // Diperbaiki di bawah agar aman
+  });
 
-  // Format Jam: HH:MM:SS
-  const jam = sekarang.toTimeString().split(" ")[0];
+  // Cara aman ambil angka jam & menit WIB
+  const jamStr = formatterWaktu.format(sekarang); // format "HH:MM:SS"
+  const [jamPart, menitPart] = jamStr.split(":");
+  const jamNum = parseInt(jamPart, 10);
+  const menitNum = parseInt(menitPart, 10);
 
-  const waktuAbsenDecimal = sekarang.getHours() + sekarang.getMinutes() / 60;
+  const waktuAbsenDecimal = jamNum + menitNum / 60;
+
+  // Hari dan Tanggal dalam format Indonesia
+  const opsiTanggal = {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "long",
+  };
+  const formatterTanggal = new Intl.DateTimeFormat("id-ID", opsiTanggal);
+  const partsTgl = formatterTanggal.formatToParts(sekarang);
+
+  let hari = "",
+    tanggal = "";
+  partsTgl.forEach((part) => {
+    if (part.type === "weekday") hari = part.value;
+    if (part.type === "day") tanggal = part.value + "-" + tanggal; // disusun
+  });
+  // Format simpel tanggal YYYY-MM-DD versi WIB
+  const formatTanggalWIB = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+  }).format(sekarang);
 
   let statusKehadiran = "";
+  let statusKirimFrontend = "";
+
   if (waktuAbsenDecimal <= 7.0) {
-    statusKehadiran = `Halo ${karyawanDitemukan.nama} (${karyawanDitemukan.id}), Anda hadir tepat waktu!`;
+    statusKehadiran = "anda hadir tepat waktu";
+    statusKirimFrontend = `Halo ${karyawanDitemukan.nama} (${karyawanDitemukan.id}), Anda hadir tepat waktu!`;
   } else if (waktuAbsenDecimal > 7.0 && waktuAbsenDecimal <= 8.0) {
-    statusKehadiran = `Halo ${karyawanDitemukan.nama} (${karyawanDitemukan.id}), Anda terlambat sedang.`;
+    statusKehadiran = "anda terlambat sedang";
+    statusKirimFrontend = `Halo ${karyawanDitemukan.nama} (${karyawanDitemukan.id}), Anda terlambat sedang.`;
   } else {
-    statusKehadiran = `Halo ${karyawanDitemukan.nama} (${karyawanDitemukan.id}), Anda terlambat sangat berat!`;
+    statusKehadiran = "anda terlambat sangat berat";
+    statusKirimFrontend = `Halo ${karyawanDitemukan.nama} (${karyawanDitemukan.id}), Anda terlambat sangat berat!`;
   }
 
-  // Buat objek data riwayat baru
   const dataBaru = {
     idKaryawan: karyawanDitemukan.id,
     nama: karyawanDitemukan.nama,
-    tanggal: tanggal,
+    tanggal: formatTanggalWIB,
     hari: hari,
-    jam: jam,
+    jam: jamStr,
     keterangan: statusKehadiran,
   };
 
-  // Simpan ke file absensi.json secara real-time
   try {
     const semuaAbsen = bacaDataAbsen();
     semuaAbsen.push(dataBaru);
@@ -115,12 +141,11 @@ app.post("/api/absen", (req, res) => {
 
   return res.status(200).json({
     status: "sukses",
-    pesan: statusKehadiran,
-    waktuServer: `${jam} (${hari}, ${tanggal})`,
+    pesan: statusKirimFrontend,
+    waktuServer: `${jamStr} (${hari}, ${formatTanggalWIB})`,
   });
 });
 
-// Endpoint tambahan (Opsional): Untuk melihat daftar riwayat absensi dalam format JSON
 app.get("/api/riwayat", (req, res) => {
   const riwayat = bacaDataAbsen();
   res.status(200).json(riwayat);
